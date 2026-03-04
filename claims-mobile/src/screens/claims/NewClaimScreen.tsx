@@ -1,18 +1,73 @@
 import React, { useState } from 'react';
 import {
-  View, Text, StyleSheet, SafeAreaView, ScrollView,
-  TouchableOpacity, Alert, ActivityIndicator, Image
+  View,
+  Text,
+  StyleSheet,
+  SafeAreaView,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+  Image,
+  TextInput,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { useAuthStore } from '../../store/useAuthStore';
 import { createClaim, uploadDocument } from '../../services/firebase';
-import { Colors, Spacing, Typography, Radius, Shadow, getClaimTypeColor, getClaimTypeIcon } from '../../theme';
+import {
+  Colors,
+  Spacing,
+  Typography,
+  Radius,
+  Shadow,
+  getClaimTypeColor,
+  getClaimTypeLabel,
+} from '../../theme';
 import { ClaimType, Document } from '../../types';
 import Input from '../../components/Input';
 import Button from '../../components/Button';
 import { format } from 'date-fns';
+
+// ─── Type-specific placeholder copy ──────────────────────
+
+const TYPE_PLACEHOLDERS: Record<
+  ClaimType,
+  { title: string; description: string; amount: string }
+> = {
+  motor: {
+    title: 'e.g. Rear-end collision on Victoria Island',
+    description:
+      'Describe the accident: where it happened, vehicles involved, damage sustained, any injuries, and whether police were notified...',
+    amount: 'e.g. 450000',
+  },
+  home: {
+    title: 'e.g. Burst pipe flooding in kitchen',
+    description:
+      'Describe the damage: what happened, which rooms or areas are affected, when you discovered it, and any emergency repairs already done...',
+    amount: 'e.g. 120000',
+  },
+  health: {
+    title: 'e.g. Emergency surgery at Lagos Island Hospital',
+    description:
+      'Describe the medical event: diagnosis, treatment received, hospital name, dates of admission and discharge, and the attending physician...',
+    amount: 'e.g. 85000',
+  },
+  travel: {
+    title: 'e.g. Flight cancellation — Lagos to London',
+    description:
+      'Describe the incident: flight details, reason for cancellation or delay, any baggage lost, and costs incurred (hotel, rebooking, etc.)...',
+    amount: 'e.g. 200000',
+  },
+  life: {
+    title: 'e.g. Life insurance benefit claim for John Doe',
+    description:
+      'Provide details of the policyholder: date of passing, cause of death, relationship to the claimant, and any supporting medical documentation available...',
+    amount: 'e.g. 5000000',
+  },
+};
+
+// ─── Claim type options ───────────────────────────────────
 
 const CLAIM_TYPES: { type: ClaimType; label: string; description: string }[] = [
   { type: 'motor', label: 'Motor', description: 'Vehicle accidents & damage' },
@@ -32,16 +87,19 @@ export default function NewClaimScreen() {
   const [step, setStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
 
-  // Form state
   const [claimType, setClaimType] = useState<ClaimType>(
     route.params?.preselectedType || 'motor'
   );
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [incidentDate, setIncidentDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [incidentDate, setIncidentDate] = useState(
+    format(new Date(), 'yyyy-MM-dd')
+  );
   const [estimatedAmount, setEstimatedAmount] = useState('');
   const [documents, setDocuments] = useState<Document[]>([]);
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
+
+  const placeholders = TYPE_PLACEHOLDERS[claimType];
 
   const pickImage = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -49,13 +107,11 @@ export default function NewClaimScreen() {
       Alert.alert('Permission needed', 'Please allow photo access to upload documents.');
       return;
     }
-
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsMultipleSelection: true,
       quality: 0.8,
     });
-
     if (!result.canceled) {
       const newDocs = result.assets.map((asset, index) => ({
         id: `doc_${Date.now()}_${index}`,
@@ -74,43 +130,38 @@ export default function NewClaimScreen() {
       Alert.alert('Permission needed', 'Please allow camera access.');
       return;
     }
-
     const result = await ImagePicker.launchCameraAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       quality: 0.85,
     });
-
     if (!result.canceled) {
-      // Compress the image
       const compressed = await ImageManipulator.manipulateAsync(
         result.assets[0].uri,
         [{ resize: { width: 1200 } }],
         { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
       );
-
-      const newDoc: Document = {
-        id: `doc_${Date.now()}`,
-        uri: compressed.uri,
-        name: `Photo_${documents.length + 1}.jpg`,
-        type: 'image',
-        size: 0,
-      };
-      setDocuments((prev) => [...prev, newDoc]);
+      setDocuments((prev) => [
+        ...prev,
+        {
+          id: `doc_${Date.now()}`,
+          uri: compressed.uri,
+          name: `Photo_${prev.length + 1}.jpg`,
+          type: 'image',
+          size: 0,
+        },
+      ]);
     }
   };
 
-  const removeDocument = (id: string) => {
+  const removeDocument = (id: string) =>
     setDocuments((prev) => prev.filter((d) => d.id !== id));
-  };
 
   const handleSubmit = async () => {
     if (!user) return;
     setSubmitting(true);
-
     try {
       const refNumber = `CLM-${Date.now().toString().slice(-8)}`;
 
-      // Upload documents first
       const uploadedDocs: Document[] = [];
       for (const doc of documents) {
         const path = `claims/${user.id}/${refNumber}/${doc.name}`;
@@ -120,17 +171,17 @@ export default function NewClaimScreen() {
         uploadedDocs.push({ ...doc, cloudUrl });
       }
 
-      const claimData = {
+      await createClaim({
         userId: user.id,
         type: claimType,
         title,
         description,
         incidentDate,
         estimatedAmount: parseFloat(estimatedAmount) || 0,
-        status: 'submitted' as const,
+        status: 'submitted',
         statusHistory: [
           {
-            key: 'submitted' as const,
+            key: 'submitted',
             label: 'Submitted',
             timestamp: new Date().toISOString(),
           },
@@ -141,14 +192,20 @@ export default function NewClaimScreen() {
         referenceNumber: refNumber,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-      };
-
-      await createClaim(claimData);
+      });
 
       Alert.alert(
-        '✅ Claim Submitted!',
-        `Your claim has been submitted successfully.\n\nReference: ${refNumber}\n\nYou'll receive notifications as your claim is processed.`,
-        [{ text: 'View Claims', onPress: () => navigation.navigate('Claims') }]
+        'Claim Submitted',
+        `Reference: ${refNumber}\n\nYour claim has been received. You'll be notified as it progresses.`,
+        [
+          {
+            text: 'View Claims',
+            onPress: () => {
+              // ✅ Fix: navigate to the nested tab screen correctly
+              navigation.navigate('Main', { screen: 'Claims' });
+            },
+          },
+        ]
       );
     } catch (error: any) {
       Alert.alert('Submission Failed', error.message);
@@ -159,8 +216,8 @@ export default function NewClaimScreen() {
 
   const canProceed = () => {
     if (step === 0) return !!claimType;
-    if (step === 1) return title.length > 3 && description.length > 10 && !!estimatedAmount;
-    if (step === 2) return true; // Documents optional but recommended
+    if (step === 1)
+      return title.length > 3 && description.length > 10 && !!estimatedAmount;
     return true;
   };
 
@@ -175,156 +232,201 @@ export default function NewClaimScreen() {
         <View style={{ width: 36 }} />
       </View>
 
-      {/* Progress steps */}
-      <View style={styles.stepsContainer}>
-        {STEPS.map((s, i) => (
-          <View key={s} style={styles.stepItem}>
-            <View
-              style={[
-                styles.stepCircle,
-                i < step && styles.stepDone,
-                i === step && styles.stepActive,
-              ]}
-            >
-              {i < step ? (
-                <Text style={styles.stepCheckmark}>✓</Text>
-              ) : (
-                <Text style={[styles.stepNumber, i === step && { color: Colors.white }]}>
-                  {i + 1}
+      {/* Step indicator */}
+      <View style={styles.stepsRow}>
+        {STEPS.map((s, i) => {
+          const isDone = i < step;
+          const isActive = i === step;
+          return (
+            <React.Fragment key={s}>
+              <View style={styles.stepItem}>
+                <View
+                  style={[
+                    styles.stepCircle,
+                    isDone && styles.stepCircleDone,
+                    isActive && styles.stepCircleActive,
+                  ]}
+                >
+                  {isDone ? (
+                    <Text style={styles.stepCheck}>✓</Text>
+                  ) : (
+                    <Text
+                      style={[
+                        styles.stepNum,
+                        isActive && styles.stepNumActive,
+                      ]}
+                    >
+                      {i + 1}
+                    </Text>
+                  )}
+                </View>
+                <Text
+                  style={[
+                    styles.stepLabel,
+                    isActive && styles.stepLabelActive,
+                  ]}
+                >
+                  {s}
                 </Text>
+              </View>
+              {i < STEPS.length - 1 && (
+                <View
+                  style={[styles.stepLine, isDone && styles.stepLineDone]}
+                />
               )}
-            </View>
-            <Text style={[styles.stepLabel, i === step && styles.stepLabelActive]}>{s}</Text>
-            {i < STEPS.length - 1 && (
-              <View style={[styles.stepLine, i < step && styles.stepLineDone]} />
-            )}
-          </View>
-        ))}
+            </React.Fragment>
+          );
+        })}
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {/* Step 0: Claim Type */}
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ── Step 0: Type ── */}
         {step === 0 && (
           <View>
             <Text style={styles.stepTitle}>What type of claim?</Text>
-            <Text style={styles.stepSubtitle}>Select the insurance category that applies</Text>
-            {CLAIM_TYPES.map(({ type, label, description }) => (
-              <TouchableOpacity
-                key={type}
-                style={[
-                  styles.typeCard,
-                  claimType === type && styles.typeCardSelected,
-                  claimType === type && { borderColor: getClaimTypeColor(type) },
-                ]}
-                onPress={() => setClaimType(type)}
-              >
-                <View
+            <Text style={styles.stepSubtitle}>
+              Select the insurance category that applies
+            </Text>
+            {CLAIM_TYPES.map(({ type, label, description }) => {
+              const color = getClaimTypeColor(type);
+              const selected = claimType === type;
+              return (
+                <TouchableOpacity
+                  key={type}
                   style={[
-                    styles.typeIconContainer,
-                    { backgroundColor: `${getClaimTypeColor(type)}15` },
+                    styles.typeCard,
+                    selected && { borderColor: color, borderWidth: 2 },
                   ]}
+                  onPress={() => setClaimType(type)}
+                  activeOpacity={0.75}
                 >
-                  <Text style={styles.typeIcon}>{getClaimTypeIcon(type)}</Text>
-                </View>
-                <View style={styles.typeInfo}>
-                  <Text style={styles.typeLabel}>{label} Insurance</Text>
-                  <Text style={styles.typeDescription}>{description}</Text>
-                </View>
-                <View
-                  style={[
-                    styles.radioOuter,
-                    claimType === type && { borderColor: getClaimTypeColor(type) },
-                  ]}
-                >
-                  {claimType === type && (
-                    <View
-                      style={[
-                        styles.radioInner,
-                        { backgroundColor: getClaimTypeColor(type) },
-                      ]}
-                    />
-                  )}
-                </View>
-              </TouchableOpacity>
-            ))}
+                  <View
+                    style={[
+                      styles.typeInitialBox,
+                      { backgroundColor: `${color}12` },
+                    ]}
+                  >
+                    <Text style={[styles.typeInitial, { color }]}>
+                      {label.charAt(0)}
+                    </Text>
+                  </View>
+                  <View style={styles.typeInfo}>
+                    <Text style={styles.typeLabel}>{label} Insurance</Text>
+                    <Text style={styles.typeDesc}>{description}</Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.radio,
+                      selected && { borderColor: color },
+                    ]}
+                  >
+                    {selected && (
+                      <View style={[styles.radioDot, { backgroundColor: color }]} />
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
           </View>
         )}
 
-        {/* Step 1: Details */}
+        {/* ── Step 1: Details ── */}
         {step === 1 && (
           <View>
             <Text style={styles.stepTitle}>Claim Details</Text>
-            <Text style={styles.stepSubtitle}>Provide information about the incident</Text>
+            <Text style={styles.stepSubtitle}>
+              Provide information about the incident
+            </Text>
+
             <Input
               label="Claim Title"
               value={title}
               onChangeText={setTitle}
-              placeholder="e.g. Vehicle collision on Main St"
-              icon="📝"
+              // ✅ Type-specific placeholder
+              placeholder={placeholders.title}
             />
-            <View style={styles.textAreaContainer}>
-              <Text style={styles.textAreaLabel}>DESCRIPTION</Text>
-              <View style={styles.textArea}>
-                <Input
-                  label=""
-                  value={description}
-                  onChangeText={setDescription}
-                  placeholder="Describe what happened in detail..."
-                  multiline
-                  numberOfLines={5}
-                  style={{ paddingTop: 12 } as any}
-                />
-              </View>
+
+            {/* ✅ Fixed description field — standalone TextInput with proper styling */}
+            <View style={styles.descContainer}>
+              <Text style={styles.descLabel}>DESCRIPTION</Text>
+              <TextInput
+                style={styles.descInput}
+                value={description}
+                onChangeText={setDescription}
+                placeholder={placeholders.description}
+                placeholderTextColor={Colors.textTertiary}
+                multiline
+                numberOfLines={5}
+                textAlignVertical="top"
+              />
             </View>
+
             <Input
               label="Date of Incident"
               value={incidentDate}
               onChangeText={setIncidentDate}
               placeholder="YYYY-MM-DD"
-              icon="📅"
+              hint="Format: YYYY-MM-DD"
             />
             <Input
-              label="Estimated Claim Amount ($)"
+              label="Estimated Amount (₦)"
               value={estimatedAmount}
               onChangeText={setEstimatedAmount}
               keyboardType="numeric"
-              placeholder="0.00"
-              icon="💰"
+              // ✅ Type-specific amount placeholder
+              placeholder={placeholders.amount}
             />
           </View>
         )}
 
-        {/* Step 2: Documents */}
+        {/* ── Step 2: Documents ── */}
         {step === 2 && (
           <View>
             <Text style={styles.stepTitle}>Supporting Documents</Text>
             <Text style={styles.stepSubtitle}>
-              Upload photos of damage, receipts, or other relevant documents
+              Upload photos of damage, receipts, or relevant documents.
+              This helps speed up processing.
             </Text>
 
-            <View style={styles.uploadActions}>
+            <View style={styles.uploadRow}>
               <TouchableOpacity style={styles.uploadBtn} onPress={takePhoto}>
-                <Text style={styles.uploadBtnIcon}>📷</Text>
-                <Text style={styles.uploadBtnText}>Take Photo</Text>
+                <View style={styles.uploadBtnIcon}>
+                  <View style={styles.cameraLens} />
+                </View>
+                <Text style={styles.uploadBtnLabel}>Camera</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.uploadBtn} onPress={pickImage}>
-                <Text style={styles.uploadBtnIcon}>🖼️</Text>
-                <Text style={styles.uploadBtnText}>From Gallery</Text>
+                <View style={styles.uploadBtnIcon}>
+                  <View style={styles.galleryGrid}>
+                    {[0, 1, 2, 3].map((i) => (
+                      <View key={i} style={styles.galleryCell} />
+                    ))}
+                  </View>
+                </View>
+                <Text style={styles.uploadBtnLabel}>Gallery</Text>
               </TouchableOpacity>
             </View>
 
-            {documents.length > 0 && (
-              <View style={styles.documentList}>
-                <Text style={styles.docListTitle}>{documents.length} document(s) selected</Text>
+            {documents.length > 0 ? (
+              <View style={styles.docList}>
+                <Text style={styles.docListTitle}>
+                  {documents.length} file{documents.length !== 1 ? 's' : ''} attached
+                </Text>
                 {documents.map((doc) => (
-                  <View key={doc.id} style={styles.docItem}>
+                  <View key={doc.id} style={styles.docRow}>
                     {doc.type === 'image' && (
                       <Image source={{ uri: doc.uri }} style={styles.docThumb} />
                     )}
-                    <View style={styles.docInfo}>
-                      <Text style={styles.docName} numberOfLines={1}>{doc.name}</Text>
+                    <View style={styles.docMeta}>
+                      <Text style={styles.docName} numberOfLines={1}>
+                        {doc.name}
+                      </Text>
                       {uploadProgress[doc.id] !== undefined && (
-                        <View style={styles.progressBar}>
+                        <View style={styles.progressTrack}>
                           <View
                             style={[
                               styles.progressFill,
@@ -336,64 +438,79 @@ export default function NewClaimScreen() {
                     </View>
                     <TouchableOpacity
                       onPress={() => removeDocument(doc.id)}
-                      style={styles.removeDoc}
+                      style={styles.removeBtn}
                     >
-                      <Text style={styles.removeDocText}>✕</Text>
+                      <Text style={styles.removeBtnText}>✕</Text>
                     </TouchableOpacity>
                   </View>
                 ))}
               </View>
-            )}
-
-            {documents.length === 0 && (
-              <View style={styles.noDocuments}>
-                <Text style={styles.noDocIcon}>📎</Text>
-                <Text style={styles.noDocText}>
-                  No documents attached yet.{'\n'}
-                  Documents help speed up your claim.
+            ) : (
+              <View style={styles.noDocsBox}>
+                <View style={styles.noDocsIcon}>
+                  <View style={styles.noDocsLine} />
+                  <View style={[styles.noDocsLine, { width: 28 }]} />
+                  <View style={[styles.noDocsLine, { width: 20 }]} />
+                </View>
+                <Text style={styles.noDocsTitle}>No files attached</Text>
+                <Text style={styles.noDocsText}>
+                  Documents are optional but significantly speed up your claim
                 </Text>
               </View>
             )}
           </View>
         )}
 
-        {/* Step 3: Review */}
+        {/* ── Step 3: Review ── */}
         {step === 3 && (
           <View>
             <Text style={styles.stepTitle}>Review & Submit</Text>
-            <Text style={styles.stepSubtitle}>Confirm your claim details before submitting</Text>
+            <Text style={styles.stepSubtitle}>
+              Confirm your claim details before submitting
+            </Text>
 
             <View style={styles.reviewCard}>
               <ReviewRow
-                label="Claim Type"
-                value={`${getClaimTypeIcon(claimType)} ${claimType.charAt(0).toUpperCase() + claimType.slice(1)} Insurance`}
+                label="Type"
+                value={`${getClaimTypeLabel(claimType)} Insurance`}
               />
               <ReviewRow label="Title" value={title} />
               <ReviewRow label="Incident Date" value={incidentDate} />
-              <ReviewRow label="Estimated Amount" value={`$${parseFloat(estimatedAmount || '0').toLocaleString()}`} />
-              <ReviewRow label="Documents" value={`${documents.length} attached`} />
-              <ReviewRow label="Policy Number" value={user?.policyNumber || ''} isLast />
+              <ReviewRow
+                label="Est. Amount"
+                value={`₦${parseFloat(estimatedAmount || '0').toLocaleString()}`}
+              />
+              <ReviewRow
+                label="Documents"
+                value={`${documents.length} attached`}
+              />
+              <ReviewRow
+                label="Policy"
+                value={user?.policyNumber || ''}
+                isLast
+              />
             </View>
 
-            <View style={styles.reviewNote}>
-              <Text style={styles.reviewNoteIcon}>ℹ️</Text>
-              <Text style={styles.reviewNoteText}>
-                By submitting, you confirm that all information provided is accurate and complete.
-                False claims may result in policy cancellation.
+            <View style={styles.disclaimer}>
+              <View style={styles.disclaimerDot} />
+              <Text style={styles.disclaimerText}>
+                By submitting, you confirm that all information provided is
+                accurate. False or misleading claims may result in policy
+                cancellation.
               </Text>
             </View>
           </View>
         )}
       </ScrollView>
 
-      {/* Navigation footer */}
+      {/* Footer navigation */}
       <View style={styles.footer}>
         {step > 0 && (
           <Button
             label="Back"
             onPress={() => setStep((s) => s - 1)}
             variant="outline"
-            style={{ flex: 1 }}
+            style={styles.footerBack}
           />
         )}
         {step < STEPS.length - 1 ? (
@@ -401,14 +518,14 @@ export default function NewClaimScreen() {
             label="Continue →"
             onPress={() => setStep((s) => s + 1)}
             disabled={!canProceed()}
-            style={{ flex: 2 }}
+            style={styles.footerNext}
           />
         ) : (
           <Button
-            label={submitting ? 'Submitting...' : 'Submit Claim'}
+            label="Submit Claim"
             onPress={handleSubmit}
             loading={submitting}
-            style={{ flex: 2 }}
+            style={styles.footerNext}
           />
         )}
       </View>
@@ -416,145 +533,443 @@ export default function NewClaimScreen() {
   );
 }
 
+// ─── Review row ───────────────────────────────────────────
+
 function ReviewRow({
-  label, value, isLast = false,
+  label,
+  value,
+  isLast = false,
 }: {
-  label: string; value: string; isLast?: boolean;
+  label: string;
+  value: string;
+  isLast?: boolean;
 }) {
   return (
-    <View style={[reviewStyles.row, !isLast && reviewStyles.rowBorder]}>
+    <View
+      style={[
+        reviewStyles.row,
+        !isLast && { borderBottomWidth: 1, borderBottomColor: Colors.divider },
+      ]}
+    >
       <Text style={reviewStyles.label}>{label}</Text>
-      <Text style={reviewStyles.value}>{value}</Text>
+      <Text style={reviewStyles.value} numberOfLines={2}>
+        {value}
+      </Text>
     </View>
   );
 }
 
 const reviewStyles = StyleSheet.create({
-  row: { paddingVertical: Spacing.md, flexDirection: 'row', justifyContent: 'space-between' },
-  rowBorder: { borderBottomWidth: 1, borderBottomColor: Colors.borderLight },
-  label: { color: Colors.textSecondary, fontSize: Typography.base },
-  value: { color: Colors.textPrimary, fontWeight: '600', fontSize: Typography.base, flex: 1, textAlign: 'right' },
+  row: {
+    paddingVertical: Spacing.md,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: Spacing.md,
+  },
+  label: {
+    fontSize: Typography.sm,
+    color: Colors.textSecondary,
+    fontWeight: '500',
+    width: 90,
+  },
+  value: {
+    flex: 1,
+    fontSize: Typography.sm,
+    color: Colors.textPrimary,
+    fontWeight: '600',
+    textAlign: 'right',
+  },
 });
 
+// ─── Styles ───────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
+  container: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
   header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md,
-    backgroundColor: Colors.white, borderBottomWidth: 1, borderBottomColor: Colors.border,
-  },
-  headerTitle: { fontSize: Typography.lg, fontWeight: '800', color: Colors.textPrimary },
-  closeBtn: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: Colors.borderLight, alignItems: 'center', justifyContent: 'center',
-  },
-  closeBtnText: { fontSize: Typography.md, color: Colors.textSecondary },
-  stepsContainer: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.md, backgroundColor: Colors.white,
-    borderBottomWidth: 1, borderBottomColor: Colors.border,
-  },
-  stepItem: { flex: 1, alignItems: 'center', flexDirection: 'row', position: 'relative' },
-  stepCircle: {
-    width: 28, height: 28, borderRadius: 14, borderWidth: 2,
-    borderColor: Colors.border, alignItems: 'center', justifyContent: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
     backgroundColor: Colors.white,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.divider,
   },
-  stepActive: { borderColor: Colors.primary, backgroundColor: Colors.primary },
-  stepDone: { borderColor: Colors.success, backgroundColor: Colors.success },
-  stepNumber: { fontSize: Typography.sm, color: Colors.textTertiary, fontWeight: '700' },
-  stepCheckmark: { fontSize: Typography.sm, color: Colors.white, fontWeight: '700' },
+  headerTitle: {
+    fontSize: Typography.md,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  closeBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeBtnText: {
+    fontSize: Typography.sm,
+    color: Colors.textSecondary,
+    fontWeight: '600',
+  },
+
+  // Steps
+  stepsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
+    backgroundColor: Colors.white,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.divider,
+  },
+  stepItem: {
+    alignItems: 'center',
+  },
+  stepCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    backgroundColor: Colors.white,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  stepCircleActive: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primary,
+  },
+  stepCircleDone: {
+    borderColor: Colors.success,
+    backgroundColor: Colors.success,
+  },
+  stepNum: {
+    fontSize: Typography.xs,
+    color: Colors.textTertiary,
+    fontWeight: '700',
+  },
+  stepNumActive: {
+    color: Colors.white,
+  },
+  stepCheck: {
+    fontSize: Typography.xs,
+    color: Colors.white,
+    fontWeight: '800',
+  },
   stepLabel: {
-    fontSize: 9, color: Colors.textTertiary, fontWeight: '600',
-    position: 'absolute', top: 30, left: 0, width: 50,
+    fontSize: 9,
+    color: Colors.textTertiary,
+    fontWeight: '500',
+    letterSpacing: 0.2,
   },
-  stepLabelActive: { color: Colors.primary },
-  stepLine: { flex: 1, height: 2, backgroundColor: Colors.border, marginHorizontal: 4 },
-  stepLineDone: { backgroundColor: Colors.success },
-  content: { padding: Spacing.xl, paddingBottom: 100 },
-  stepTitle: { fontSize: Typography.xxl, fontWeight: '800', color: Colors.textPrimary, marginBottom: 4 },
-  stepSubtitle: { fontSize: Typography.base, color: Colors.textSecondary, marginBottom: Spacing.xl, lineHeight: 22 },
+  stepLabelActive: {
+    color: Colors.primary,
+    fontWeight: '700',
+  },
+  stepLine: {
+    flex: 1,
+    height: 1.5,
+    backgroundColor: Colors.border,
+    marginHorizontal: Spacing.xs,
+    marginBottom: 16,
+  },
+  stepLineDone: {
+    backgroundColor: Colors.success,
+  },
+
+  // Content
+  content: {
+    padding: Spacing.xl,
+    paddingBottom: 120,
+  },
+  stepTitle: {
+    fontSize: Typography.xxl,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+    marginBottom: Spacing.xs,
+    letterSpacing: -0.3,
+  },
+  stepSubtitle: {
+    fontSize: Typography.sm,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.xl,
+    lineHeight: 20,
+  },
+
+  // Type selection
   typeCard: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.white,
-    borderRadius: Radius.lg, padding: Spacing.base, marginBottom: Spacing.md,
-    borderWidth: 1.5, borderColor: Colors.border, ...Shadow.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.white,
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    marginBottom: Spacing.sm,
+    borderWidth: 1,
+    borderColor: Colors.divider,
+    gap: Spacing.md,
+    ...Shadow.xs,
   },
-  typeCardSelected: { borderWidth: 2 },
-  typeIconContainer: {
-    width: 48, height: 48, borderRadius: Radius.md,
-    alignItems: 'center', justifyContent: 'center', marginRight: Spacing.md,
+  typeInitialBox: {
+    width: 44,
+    height: 44,
+    borderRadius: Radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
   },
-  typeIcon: { fontSize: 24 },
-  typeInfo: { flex: 1 },
-  typeLabel: { fontSize: Typography.base, fontWeight: '700', color: Colors.textPrimary },
-  typeDescription: { fontSize: Typography.sm, color: Colors.textSecondary, marginTop: 2 },
-  radioOuter: {
-    width: 20, height: 20, borderRadius: 10,
-    borderWidth: 2, borderColor: Colors.border,
-    alignItems: 'center', justifyContent: 'center',
+  typeInitial: {
+    fontSize: Typography.lg,
+    fontWeight: '800',
   },
-  radioInner: { width: 10, height: 10, borderRadius: 5 },
-  textAreaContainer: { marginBottom: Spacing.base },
-  textAreaLabel: {
-    fontSize: Typography.xs, fontWeight: '700', color: Colors.textSecondary,
-    marginBottom: Spacing.xs, letterSpacing: 0.5,
+  typeInfo: {
+    flex: 1,
   },
-  textArea: {
-    backgroundColor: Colors.white, borderRadius: Radius.md,
-    borderWidth: 1.5, borderColor: Colors.border,
+  typeLabel: {
+    fontSize: Typography.base,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginBottom: 2,
   },
-  uploadActions: { flexDirection: 'row', gap: Spacing.md, marginBottom: Spacing.xl },
+  typeDesc: {
+    fontSize: Typography.xs,
+    color: Colors.textTertiary,
+  },
+  radio: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radioDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+
+  // ✅ Fixed description field
+  descContainer: {
+    marginBottom: Spacing.base,
+  },
+  descLabel: {
+    fontSize: Typography.xs,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+    marginBottom: Spacing.sm,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  descInput: {
+    backgroundColor: Colors.white,
+    borderRadius: Radius.md,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.md,
+    fontSize: Typography.base,
+    color: Colors.textPrimary,
+    minHeight: 120,
+    textAlignVertical: 'top',
+  },
+
+  // Documents
+  uploadRow: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    marginBottom: Spacing.xl,
+  },
   uploadBtn: {
-    flex: 1, backgroundColor: Colors.white, borderRadius: Radius.lg,
-    padding: Spacing.lg, alignItems: 'center', borderWidth: 1.5,
-    borderColor: Colors.primary, borderStyle: 'dashed', ...Shadow.sm,
+    flex: 1,
+    backgroundColor: Colors.white,
+    borderRadius: Radius.lg,
+    paddingVertical: Spacing.xl,
+    alignItems: 'center',
+    gap: Spacing.md,
+    borderWidth: 1.5,
+    borderColor: Colors.accent,
+    borderStyle: 'dashed',
   },
-  uploadBtnIcon: { fontSize: 28, marginBottom: Spacing.sm },
-  uploadBtnText: { fontSize: Typography.base, fontWeight: '700', color: Colors.primary },
-  documentList: { marginTop: Spacing.base },
+  uploadBtnIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.accentLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cameraLens: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: Colors.accent,
+  },
+  galleryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    width: 18,
+    height: 18,
+    gap: 2,
+  },
+  galleryCell: {
+    width: 7,
+    height: 7,
+    borderRadius: 1,
+    backgroundColor: Colors.accent,
+  },
+  uploadBtnLabel: {
+    fontSize: Typography.sm,
+    fontWeight: '700',
+    color: Colors.accent,
+  },
+  docList: {
+    gap: Spacing.sm,
+  },
   docListTitle: {
-    fontSize: Typography.sm, fontWeight: '700', color: Colors.textSecondary,
-    marginBottom: Spacing.md, textTransform: 'uppercase', letterSpacing: 0.5,
+    fontSize: Typography.xs,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: Spacing.xs,
   },
-  docItem: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.white,
-    borderRadius: Radius.md, padding: Spacing.md, marginBottom: Spacing.sm,
-    gap: Spacing.md, ...Shadow.sm,
+  docRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.white,
+    borderRadius: Radius.md,
+    padding: Spacing.md,
+    gap: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.divider,
   },
-  docThumb: { width: 44, height: 44, borderRadius: Radius.sm },
-  docInfo: { flex: 1 },
-  docName: { fontSize: Typography.sm, fontWeight: '600', color: Colors.textPrimary },
-  progressBar: {
-    height: 4, backgroundColor: Colors.borderLight,
-    borderRadius: 2, marginTop: 4, overflow: 'hidden',
+  docThumb: {
+    width: 44,
+    height: 44,
+    borderRadius: Radius.sm,
   },
-  progressFill: { height: 4, backgroundColor: Colors.primary, borderRadius: 2 },
-  removeDoc: {
-    width: 28, height: 28, borderRadius: 14,
-    backgroundColor: Colors.borderLight, alignItems: 'center', justifyContent: 'center',
+  docMeta: {
+    flex: 1,
   },
-  removeDocText: { fontSize: Typography.sm, color: Colors.textSecondary },
-  noDocuments: {
-    alignItems: 'center', padding: Spacing.xxxl,
-    backgroundColor: Colors.white, borderRadius: Radius.xl, ...Shadow.sm,
+  docName: {
+    fontSize: Typography.sm,
+    fontWeight: '600',
+    color: Colors.textPrimary,
   },
-  noDocIcon: { fontSize: 40, marginBottom: Spacing.md },
-  noDocText: {
-    fontSize: Typography.base, color: Colors.textSecondary,
-    textAlign: 'center', lineHeight: 22,
+  progressTrack: {
+    height: 3,
+    backgroundColor: Colors.divider,
+    borderRadius: 2,
+    marginTop: 6,
+    overflow: 'hidden',
   },
+  progressFill: {
+    height: 3,
+    backgroundColor: Colors.accent,
+    borderRadius: 2,
+  },
+  removeBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  removeBtnText: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    fontWeight: '700',
+  },
+  noDocsBox: {
+    alignItems: 'center',
+    paddingVertical: Spacing.xxxl,
+    backgroundColor: Colors.white,
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: Colors.divider,
+  },
+  noDocsIcon: {
+    gap: Spacing.sm,
+    marginBottom: Spacing.lg,
+    alignItems: 'flex-start',
+  },
+  noDocsLine: {
+    width: 36,
+    height: 3,
+    backgroundColor: Colors.divider,
+    borderRadius: 2,
+  },
+  noDocsTitle: {
+    fontSize: Typography.base,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginBottom: Spacing.xs,
+  },
+  noDocsText: {
+    fontSize: Typography.sm,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    paddingHorizontal: Spacing.xl,
+    lineHeight: 20,
+  },
+
+  // Review
   reviewCard: {
-    backgroundColor: Colors.white, borderRadius: Radius.xl,
-    padding: Spacing.lg, marginBottom: Spacing.lg, ...Shadow.md,
+    backgroundColor: Colors.white,
+    borderRadius: Radius.xl,
+    padding: Spacing.base,
+    borderWidth: 1,
+    borderColor: Colors.divider,
+    marginBottom: Spacing.lg,
+    ...Shadow.sm,
   },
-  reviewNote: {
-    flexDirection: 'row', gap: Spacing.sm, backgroundColor: `${Colors.warning}15`,
-    borderRadius: Radius.md, padding: Spacing.md,
+  disclaimer: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    backgroundColor: Colors.warningLight,
+    borderRadius: Radius.md,
+    padding: Spacing.md,
+    borderLeftWidth: 3,
+    borderLeftColor: Colors.warning,
   },
-  reviewNoteIcon: { fontSize: 16 },
-  reviewNoteText: { flex: 1, fontSize: Typography.sm, color: Colors.warning, lineHeight: 18 },
+  disclaimerDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: Colors.warning,
+    marginTop: 5,
+    flexShrink: 0,
+  },
+  disclaimerText: {
+    flex: 1,
+    fontSize: Typography.xs,
+    color: Colors.warning,
+    lineHeight: 18,
+  },
+
+  // Footer
   footer: {
-    flexDirection: 'row', gap: Spacing.sm, padding: Spacing.xl,
-    backgroundColor: Colors.white, borderTopWidth: 1, borderTopColor: Colors.border,
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    padding: Spacing.xl,
+    backgroundColor: Colors.white,
+    borderTopWidth: 1,
+    borderTopColor: Colors.divider,
+  },
+  footerBack: {
+    flex: 1,
+  },
+  footerNext: {
+    flex: 2,
   },
 });
