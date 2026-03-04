@@ -1,0 +1,52 @@
+{
+  "expo": {
+    "name": "ClaimsTrack",
+    "slug": "claimstrack",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F0F4FF"
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        { "cameraPermission": "ClaimTrack needs camera access to photograph damage." }
+      ],
+      [
+        "expo-image-picker",
+        { "photosPermission": "ClaimTrack needs photo library access to attach documents." }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#2563EB"
+        }
+      ]
+    ],
+     "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.claimtrack.app",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "ClaimTrack needs photo access to upload claim documents.",
+        "NSCameraUsageDescription": "ClaimTrack needs camera access to photograph damage."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#F0F4FF"
+      },
+      "package": "com.claimtrack.app",
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
+    }
+  }
+}
