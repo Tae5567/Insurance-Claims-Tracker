@@ -1,9 +1,9 @@
 ## ClaimTrack
 
 A mobile insurance claims platform built with React Native, Expo, Firebase and Node.js.
-
-![](claims-mobile/assets/claim.png)
-![](claims-mobile/assets/details.png)
+| Claim Form | Claim Details |
+|---|---|
+| ![](claims-mobile/assets/claim.png) | ![](claims-mobile/assets/details.png) | 
 
 ## Overview
 
